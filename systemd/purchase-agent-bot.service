@@ -1,0 +1,15 @@
+[Unit]
+Description=Purchase Tracker Telegram Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/purchase_tracker_telegram_agent
+EnvironmentFile=%h/purchase_tracker_telegram_agent/.env
+ExecStart=%h/purchase_tracker_telegram_agent/.venv/bin/purchase-agent-bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

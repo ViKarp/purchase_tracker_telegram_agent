@@ -1,0 +1,22 @@
+[project]
+name = "purchase-tracker-telegram-agent"
+version = "0.1.0"
+description = "Telegram bot agent for a local purchase-tracker MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiogram>=3.13.0",
+    "mcp>=1.2.0",
+    "openai>=1.59.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+purchase-agent-bot = "purchase_agent.main:run"
+purchase-agent-smoke = "purchase_agent.smoke_check:run"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
