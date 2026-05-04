@@ -106,7 +106,7 @@ which purchase-tracker-mcp
 Ожидаемо путь должен быть примерно такой:
 
 ```text
-/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
+/home/vityakarpenko2016/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
 ```
 
 Можно проверить ручной запуск:
@@ -142,8 +142,8 @@ which purchase-agent-smoke
 Ожидаемые пути:
 
 ```text
-/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-agent-bot
-/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-agent-smoke
+/home/vityakarpenko2016/apps/purchase-tracker/.venv/bin/purchase-agent-bot
+/home/vityakarpenko2016/apps/purchase-tracker/.venv/bin/purchase-agent-smoke
 ```
 
 ---
@@ -175,10 +175,10 @@ LLM_TEMPERATURE=0.1
 LLM_MAX_TOKENS=1200
 LLM_MAX_TOOL_ITERATIONS=6
 
-MCP_SERVER_COMMAND=/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
+MCP_SERVER_COMMAND=/home/vityakarpenko2016/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
 MCP_SERVER_ARGS=
 
-PURCHASE_DB_PATH=/home/ubuntu/.purchase_tracker_mcp/purchases.sqlite3
+PURCHASE_DB_PATH=/home/vityakarpenko2016/.purchase_tracker_mcp/purchases.sqlite3
 
 AGENT_TIMEZONE=Europe/Moscow
 AGENT_DEFAULT_CURRENCY=RUB
@@ -203,30 +203,6 @@ TELEGRAM_ALLOWED_USER_IDS=123456789
 ```
 
 Если оставить `TELEGRAM_ALLOWED_USER_IDS` пустым, бот будет отвечать любому пользователю, который найдёт бота в Telegram.
-
-### Если серверный пользователь не `ubuntu`
-
-Узнай домашнюю директорию:
-
-```bash
-echo $HOME
-```
-
-Если путь не `/home/ubuntu`, замени в `.env`:
-
-```env
-MCP_SERVER_COMMAND=/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
-PURCHASE_DB_PATH=/home/ubuntu/.purchase_tracker_mcp/purchases.sqlite3
-```
-
-на реальные пути из твоего сервера.
-
-Например, если пользователь `yc-user`, пути будут такими:
-
-```env
-MCP_SERVER_COMMAND=/home/yc-user/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
-PURCHASE_DB_PATH=/home/yc-user/.purchase_tracker_mcp/purchases.sqlite3
-```
 
 ---
 
@@ -293,7 +269,7 @@ health:
 {
   "ok": true,
   "server": "purchase-tracker",
-  "db_path": "/home/ubuntu/.purchase_tracker_mcp/purchases.sqlite3",
+  "db_path": "/home/vityakarpenko2016/.purchase_tracker_mcp/purchases.sqlite3",
   "purchase_count": 0,
   "category_count": 17
 }
@@ -356,37 +332,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/ubuntu/apps/purchase-tracker/purchase_tracker_telegram_agent
-EnvironmentFile=/home/ubuntu/apps/purchase-tracker/purchase_tracker_telegram_agent/.env
-ExecStart=/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-agent-bot
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-```
-
-Если пользователь на сервере не `ubuntu`, замени `/home/ubuntu` на реальный путь.
-
-Проверь путь:
-
-```bash
-echo $HOME
-```
-
-Например, для пользователя `yc-user` service-файл должен быть:
-
-```ini
-[Unit]
-Description=Purchase Tracker Telegram Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=/home/yc-user/apps/purchase-tracker/purchase_tracker_telegram_agent
-EnvironmentFile=/home/yc-user/apps/purchase-tracker/purchase_tracker_telegram_agent/.env
-ExecStart=/home/yc-user/apps/purchase-tracker/.venv/bin/purchase-agent-bot
+WorkingDirectory=/home/vityakarpenko2016/apps/purchase-tracker/purchase_tracker_telegram_agent
+EnvironmentFile=/home/vityakarpenko2016/apps/purchase-tracker/purchase_tracker_telegram_agent/.env
+ExecStart=/home/vityakarpenko2016/apps/purchase-tracker/.venv/bin/purchase-agent-bot
 Restart=always
 RestartSec=5
 
