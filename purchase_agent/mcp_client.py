@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 class PurchaseMCPClient:
     """Long-lived stdio MCP client for the local purchase-tracker server."""
 
+    LLM_BLOCKED_TOOL_NAMES = frozenset({"purge_all_data"})
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._exit_stack: AsyncExitStack | None = None
@@ -72,8 +74,12 @@ class PurchaseMCPClient:
             self._tools_cache = list(result.tools)
             return self._tools_cache
 
-    async def list_tools_openai_schema(self, *, refresh: bool = False) -> list[dict[str, Any]]:
+    async def list_tools_for_llm(self, *, refresh: bool = False) -> list[Any]:
         tools = await self.list_tools(refresh=refresh)
+        return [tool for tool in tools if tool.name not in self.LLM_BLOCKED_TOOL_NAMES]
+
+    async def list_tools_openai_schema(self, *, refresh: bool = False) -> list[dict[str, Any]]:
+        tools = await self.list_tools_for_llm(refresh=refresh)
         converted: list[dict[str, Any]] = []
         for tool in tools:
             input_schema = getattr(tool, "inputSchema", None) or {
@@ -93,7 +99,7 @@ class PurchaseMCPClient:
         return converted
 
     async def list_tools_for_prompt(self, *, refresh: bool = False) -> list[dict[str, Any]]:
-        tools = await self.list_tools(refresh=refresh)
+        tools = await self.list_tools_for_llm(refresh=refresh)
         result: list[dict[str, Any]] = []
         for tool in tools:
             result.append(
@@ -127,7 +133,6 @@ class PurchaseMCPClient:
         payload = dict(arguments or {})
         if (
             user_id is not None
-            and "user_id" not in payload
             and await self.tool_accepts_argument(name, "user_id")
         ):
             payload["user_id"] = str(user_id)

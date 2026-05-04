@@ -46,6 +46,7 @@ class PurchaseTelegramBot:
         self.dp.message.register(self.cmd_month, Command("month"))
         self.dp.message.register(self.cmd_categories, Command("categories"))
         self.dp.message.register(self.cmd_backup, Command("backup"))
+        self.dp.message.register(self.cmd_purge_all_data, Command("purge_all_data"))
         self.dp.message.register(self.cmd_reset_context, Command("reset_context"))
         self.dp.message.register(self.handle_text, F.text)
 
@@ -185,6 +186,23 @@ class PurchaseTelegramBot:
         else:
             await message.answer(f"Не смогла создать резервную копию:\n{payload}")
 
+    async def cmd_purge_all_data(self, message: Message) -> None:
+        if await self.reject_if_needed(message):
+            return
+        if (message.text or "").strip() != "/purge_all_data DELETE ALL PURCHASE DATA":
+            await message.answer(
+                "Опасная команда отклонена. Используй точную ручную команду:\n"
+                "/purge_all_data DELETE ALL PURCHASE DATA"
+            )
+            return
+        result = await self.mcp_client.call_tool(
+            "purge_all_data",
+            {},
+            user_id=get_message_user_id(message),
+        )
+        payload = result.get("payload") or result
+        await answer_long(message, format_purge_result(payload))
+
     async def cmd_reset_context(self, message: Message) -> None:
         if await self.reject_if_needed(message):
             return
@@ -287,7 +305,7 @@ def format_purchases_list(payload: dict[str, Any], *, title: str) -> str:
     if not payload.get("ok"):
         return f"Не удалось получить покупки: {payload}"
     items = payload.get("items") or []
-    total_count = payload.get("total_count")
+    total_count = payload.get("total_count", payload.get("total"))
     if not items:
         return f"{title}\nПокупок не найдено."
     lines = [title]
@@ -343,6 +361,12 @@ def format_monthly_budget(payload: dict[str, Any]) -> str:
                 remaining = format_money(item.get("remaining"), currency)
                 lines.append(f"• {category}: {spent} / {format_money(limit, currency)} · остаток {remaining} · {status}")
     return "\n".join(lines)
+
+
+def format_purge_result(payload: dict[str, Any]) -> str:
+    if not payload.get("ok"):
+        return f"Не удалось полностью очистить данные: {payload}"
+    return "Полная очистка данных выполнена."
 
 
 def format_categories(payload: dict[str, Any]) -> str:
