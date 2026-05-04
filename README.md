@@ -10,6 +10,8 @@ Telegram → purchase_tracker_telegram_agent → LLM → MCP client → purchase
 
 MCP-сервер не нужно запускать отдельным постоянным процессом. Агент сам поднимает его через stdio-команду `purchase-tracker-mcp`.
 
+Во всей инструкции user в папке прописан личный. Не забудьте поменять все под себя
+
 ---
 
 ## 1. Требования
