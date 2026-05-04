@@ -450,7 +450,7 @@ journalctl --user -u purchase-agent-bot -f
 По умолчанию БД лежит здесь:
 
 ```text
-/home/ubuntu/.purchase_tracker_mcp/purchases.sqlite3
+/home/vityakarpenko2016/.purchase_tracker_mcp/purchases.sqlite3
 ```
 
 Ручной бэкап:
@@ -510,7 +510,7 @@ cp ~/.purchase_tracker_mcp/purchases.sqlite3 ~/backups/purchase-tracker/purchase
 Агент сам запускает MCP-сервер через:
 
 ```env
-MCP_SERVER_COMMAND=/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
+MCP_SERVER_COMMAND=/home/vityakarpenko2016/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
 MCP_SERVER_ARGS=
 ```
 
@@ -626,3 +626,52 @@ systemctl --user restart purchase-agent-bot
 ```bash
 journalctl --user -u purchase-agent-bot -f
 ```
+
+### Включить подробные debug-логи агента
+
+Открой файл `.env` и поменяй [`LOG_LEVEL`](.env.example:33):
+
+```env
+LOG_LEVEL=DEBUG
+```
+
+После этого перезапусти сервис:
+
+```bash
+systemctl --user restart purchase-agent-bot
+```
+
+Что появится в debug-логах:
+
+- входящее сообщение пользователя;
+- какие сообщения агент отправил в LLM;
+- сырой ответ модели;
+- какие tool calls модель выбрала;
+- аргументы вызова tool;
+- результат MCP tool;
+- финальный ответ пользователю.
+
+Смотреть только debug-записи удобно так:
+
+```bash
+journalctl --user -u purchase-agent-bot -f | grep ' DEBUG '
+```
+
+### Вернуться к обычным логам
+
+В `.env` верни:
+
+```env
+LOG_LEVEL=INFO
+```
+
+И снова перезапусти сервис:
+
+```bash
+systemctl --user restart purchase-agent-bot
+```
+
+Режимы такие:
+
+- [`LOG_LEVEL=INFO`](.env.example:33) — только обычные рабочие события, предупреждения и ошибки;
+- [`LOG_LEVEL=DEBUG`](.env.example:33) — полный трассировочный режим, включая шаги агента и вызовы tool.

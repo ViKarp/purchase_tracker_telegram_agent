@@ -131,9 +131,12 @@ class PurchaseMCPClient:
             and await self.tool_accepts_argument(name, "user_id")
         ):
             payload["user_id"] = str(user_id)
+        logger.debug("Calling MCP tool name=%s payload=%s", name, _truncate_for_log(payload))
         async with self._lock:
             result = await self.session.call_tool(name, payload)
-        return serialize_call_tool_result(result)
+        serialized = serialize_call_tool_result(result)
+        logger.debug("MCP tool completed name=%s result=%s", name, _truncate_for_log(serialized))
+        return serialized
 
 
 async def safe_call_tool(
@@ -199,3 +202,11 @@ def _extract_single_json_payload(content_items: list[dict[str, Any]]) -> Any | N
     if item.get("json") is not None:
         return item["json"]
     return None
+
+
+def _truncate_for_log(value: Any, limit: int = 1200) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    text = text.replace("\n", "\\n")
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."

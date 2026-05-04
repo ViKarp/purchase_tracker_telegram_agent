@@ -47,6 +47,12 @@ class PurchaseAgent:
         self.history = ConversationStore(max_turns=settings.agent_history_turns)
 
     async def handle_user_text(self, chat_id: int, text: str, *, user_id: int | str | None = None) -> str:
+        logger.debug(
+            "Received user message chat_id=%s user_id=%s text=%s",
+            chat_id,
+            user_id,
+            _truncate_for_log(text),
+        )
         self.history.add_user(chat_id, text)
         messages = self._base_messages(chat_id)
 
@@ -98,6 +104,12 @@ class PurchaseAgent:
     ) -> str:
         tools = await self._mcp.list_tools_openai_schema()
         working_messages = [dict(message) for message in messages]
+        logger.debug(
+            "Starting native tool loop user_id=%s messages=%s tools=%s",
+            user_id,
+            _summarize_messages_for_log(working_messages),
+            _summarize_native_tools_for_log(tools),
+        )
 
         for _ in range(self._settings.llm_max_tool_iterations):
             response = await self._client.chat.completions.create(
@@ -111,9 +123,16 @@ class PurchaseAgent:
             message = response.choices[0].message
             content = message.content or ""
             tool_calls = list(message.tool_calls or [])
+            logger.debug(
+                "Native LLM response content=%s tool_calls=%s",
+                _truncate_for_log(content),
+                _summarize_tool_calls_for_log(tool_calls),
+            )
 
             if not tool_calls:
-                return content.strip() or "Готово."
+                final_text = content.strip() or "Готово."
+                logger.debug("Native tool loop finished with final answer=%s", _truncate_for_log(final_text))
+                return final_text
 
             working_messages.append(_assistant_message_with_tool_calls(content, tool_calls))
 
@@ -124,7 +143,17 @@ class PurchaseAgent:
                 except json.JSONDecodeError:
                     arguments = {}
 
+                logger.debug(
+                    "Executing native tool call name=%s arguments=%s",
+                    tool_name,
+                    _to_json_for_log(arguments),
+                )
                 tool_result = await safe_call_tool(self._mcp, tool_name, arguments, user_id=user_id)
+                logger.debug(
+                    "Native tool result name=%s result=%s",
+                    tool_name,
+                    _to_json_for_log(tool_result),
+                )
                 working_messages.append(
                     {
                         "role": "tool",
@@ -144,6 +173,12 @@ class PurchaseAgent:
     ) -> str:
         tools = await self._mcp.list_tools_for_prompt()
         tools_catalog = json.dumps(tools, ensure_ascii=False, indent=2)
+        logger.debug(
+            "Starting JSON tool loop user_id=%s messages=%s tools=%s",
+            user_id,
+            _summarize_messages_for_log(messages),
+            _summarize_prompt_tools_for_log(tools),
+        )
         system_with_json_protocol = dict(messages[0])
         system_with_json_protocol["content"] = (
             system_with_json_protocol["content"]
@@ -164,13 +199,22 @@ class PurchaseAgent:
             )
             raw_text = response.choices[0].message.content or ""
             command = parse_json_command(raw_text)
+            logger.debug(
+                "JSON tool loop raw response=%s parsed_command=%s",
+                _truncate_for_log(raw_text),
+                _to_json_for_log(command),
+            )
 
             if command is None:
-                return raw_text.strip() or "Не смогла разобрать ответ модели."
+                final_text = raw_text.strip() or "Не смогла разобрать ответ модели."
+                logger.debug("JSON tool loop finished without command final answer=%s", _truncate_for_log(final_text))
+                return final_text
 
             command_type = command.get("type")
             if command_type == "final":
-                return str(command.get("message") or "Готово.").strip()
+                final_text = str(command.get("message") or "Готово.").strip()
+                logger.debug("JSON tool loop finished with final answer=%s", _truncate_for_log(final_text))
+                return final_text
 
             if command_type == "tool_call":
                 calls = [
@@ -195,7 +239,17 @@ class PurchaseAgent:
                 if not isinstance(arguments, dict):
                     arguments = {}
 
+                logger.debug(
+                    "Executing JSON tool call name=%s arguments=%s",
+                    tool_name,
+                    _to_json_for_log(arguments),
+                )
                 result = await safe_call_tool(self._mcp, tool_name, arguments, user_id=user_id)
+                logger.debug(
+                    "JSON tool result name=%s result=%s",
+                    tool_name,
+                    _to_json_for_log(result),
+                )
                 tool_results.append(
                     {"tool_name": tool_name, "arguments": arguments, "result": result.get("payload", result)}
                 )
@@ -283,3 +337,56 @@ def _strip_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]
         clean = {"role": message.get("role"), "content": message.get("content", "")}
         stripped.append(clean)
     return stripped
+
+
+def _truncate_for_log(value: Any, limit: int = 1200) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    text = text.replace("\n", "\\n")
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def _to_json_for_log(value: Any, limit: int = 1200) -> str:
+    return _truncate_for_log(value, limit=limit)
+
+
+def _summarize_messages_for_log(messages: list[dict[str, Any]]) -> str:
+    summary = []
+    for message in messages:
+        item = {
+            "role": message.get("role"),
+            "content": _truncate_for_log(message.get("content", ""), limit=300),
+        }
+        if message.get("tool_calls"):
+            item["tool_calls"] = message.get("tool_calls")
+        if message.get("name"):
+            item["name"] = message.get("name")
+        summary.append(item)
+    return _to_json_for_log(summary)
+
+
+def _summarize_tool_calls_for_log(tool_calls: list[Any]) -> str:
+    payload = []
+    for tool_call in tool_calls:
+        payload.append(
+            {
+                "id": getattr(tool_call, "id", None),
+                "name": getattr(getattr(tool_call, "function", None), "name", None),
+                "arguments": _truncate_for_log(
+                    getattr(getattr(tool_call, "function", None), "arguments", "{}"),
+                    limit=500,
+                ),
+            }
+        )
+    return _to_json_for_log(payload)
+
+
+def _summarize_native_tools_for_log(tools: list[dict[str, Any]]) -> str:
+    payload = [tool.get("function", {}).get("name") for tool in tools]
+    return _to_json_for_log(payload, limit=600)
+
+
+def _summarize_prompt_tools_for_log(tools: list[dict[str, Any]]) -> str:
+    payload = [tool.get("name") for tool in tools]
+    return _to_json_for_log(payload, limit=600)
