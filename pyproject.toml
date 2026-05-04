@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "purchase-tracker-telegram-agent"
 version = "0.1.0"
@@ -14,6 +18,10 @@ dependencies = [
 [project.scripts]
 purchase-agent-bot = "purchase_agent.main:run"
 purchase-agent-smoke = "purchase_agent.smoke_check:run"
+
+[tool.setuptools.packages.find]
+include = ["purchase_agent*"]
+exclude = ["systemd*"]
 
 [tool.ruff]
 line-length = 100
