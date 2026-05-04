@@ -105,6 +105,18 @@ class PurchaseMCPClient:
             )
         return result
 
+    async def tool_accepts_argument(self, tool_name: str, argument_name: str) -> bool:
+        tools = await self.list_tools()
+        for tool in tools:
+            if tool.name != tool_name:
+                continue
+
+            input_schema = getattr(tool, "inputSchema", None) or {}
+            properties = input_schema.get("properties", {})
+            return argument_name in properties
+
+        return False
+
     async def call_tool(
         self,
         name: str,
@@ -113,7 +125,11 @@ class PurchaseMCPClient:
         user_id: int | str | None = None,
     ) -> dict[str, Any]:
         payload = dict(arguments or {})
-        if user_id is not None and "user_id" not in payload:
+        if (
+            user_id is not None
+            and "user_id" not in payload
+            and await self.tool_accepts_argument(name, "user_id")
+        ):
             payload["user_id"] = str(user_id)
         async with self._lock:
             result = await self.session.call_tool(name, payload)

@@ -8,7 +8,7 @@ from purchase_agent.mcp_client import PurchaseMCPClient
 
 
 async def async_main() -> None:
-    settings = load_settings()
+    settings = load_settings(require_telegram=False, require_llm=False)
     configure_logging(settings.log_level)
     client = PurchaseMCPClient(settings)
     await client.connect()

@@ -91,15 +91,15 @@ class Settings:
         return "cloud.yandex" in self.llm_base_url or self.llm_auth_header_mode == "api-key"
 
 
-def load_settings() -> Settings:
+def load_settings(*, require_telegram: bool = True, require_llm: bool = True) -> Settings:
     load_dotenv()
 
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    if not telegram_token:
+    if require_telegram and not telegram_token:
         raise RuntimeError("Не задан TELEGRAM_BOT_TOKEN в .env или переменных окружения")
 
     api_key = os.environ.get("LLM_API_KEY", "").strip()
-    if not api_key:
+    if require_llm and not api_key:
         raise RuntimeError("Не задан LLM_API_KEY в .env или переменных окружения")
 
     llm_project = os.environ.get("LLM_PROJECT", "").strip() or None

@@ -1,66 +1,164 @@
-# Purchase Tracker Telegram Agent
+# Purchase Tracker Telegram Agent: деплой на сервере
 
-Telegram-бот, который принимает сообщения о расходах, отправляет их в LLM, а LLM вызывает tools локального MCP-сервера `purchase-tracker-mcp`. MCP-сервер уже работает с SQLite-БД покупок.
+Telegram-бот для учёта покупок.
 
-Бот поддерживает несколько Telegram-пользователей поверх одной общей SQLite-БД: в каждый MCP-вызов автоматически прокидывается Telegram `user_id`, поэтому сервер может хранить покупки всех пользователей вместе, но возвращать каждому только его данные.
-
-Схема:
+Схема работы:
 
 ```text
-Telegram → этот бот → Alice AI LLM / OpenAI-compatible API → MCP client → purchase-tracker-mcp → SQLite
+Telegram → purchase_tracker_telegram_agent → LLM → MCP client → purchase_tracker_mcp_project → SQLite
 ```
 
-## Что умеет
+MCP-сервер не нужно запускать отдельным постоянным процессом. Агент сам поднимает его через stdio-команду `purchase-tracker-mcp`.
 
-- Записывать покупки из обычного текста: `кофе 250`, `вчера такси 740`, `пятёрочка 1300 продукты`.
-- Записывать несколько покупок из одного сообщения.
-- Исправлять и удалять покупки: `удали последнюю`, `исправь последнюю на 270`.
-- Смотреть расходы: `сколько ушло на кафе за месяц`, `траты сегодня по категориям`.
-- Управлять категориями и лимитами через MCP tools.
-- Работать через native tool calling, если провайдер LLM его поддерживает.
-- Автоматически откатываться в JSON tool protocol, если native tool calling не поддерживается.
-- Передавать Telegram `user_id` во все пользовательские MCP-запросы, чтобы разделять данные разных людей в одной БД.
+---
 
-## Установка рядом с MCP-сервером
+## 1. Требования
 
-Предположим, рядом лежат две папки:
+На сервере нужны:
+
+- Python 3.10+
+- git
+- доступ в интернет
+- Telegram Bot Token
+- API-ключ LLM-провайдера
+- исходники двух репозиториев из GitHub:
+  - `purchase_tracker_mcp_project`
+  - `purchase_tracker_telegram_agent`
+
+---
+
+## 2. Установка системных зависимостей
+
+Для Ubuntu/Debian:
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip
+```
+
+Проверь версию Python:
+
+```bash
+python3 --version
+```
+
+Нужна версия не ниже `3.10`.
+
+---
+
+## 3. Создание рабочей директории
+
+```bash
+mkdir -p ~/apps/purchase-tracker
+cd ~/apps/purchase-tracker
+```
+
+---
+
+## 4. Скачивание исходников из GitHub
+
+```bash
+git clone https://github.com/ViKarp/purchase_tracker_mcp_project.git
+git clone https://github.com/ViKarp/purchase_tracker_telegram_agent.git
+```
+
+После этого структура должна быть такой:
 
 ```text
-workdir/
+~/apps/purchase-tracker/
 ├── purchase_tracker_mcp_project/
 └── purchase_tracker_telegram_agent/
 ```
 
-Сначала поставь MCP-сервер из предыдущего проекта:
+---
+
+## 5. Создание одного общего virtualenv
+
+Важно: MCP-сервер и Telegram-агент лучше ставить в **один и тот же virtualenv**. Тогда агент точно увидит команду `purchase-tracker-mcp`.
 
 ```bash
-cd workdir/purchase_tracker_mcp_project
+cd ~/apps/purchase-tracker
 python3 -m venv .venv
 source .venv/bin/activate
+```
+
+Обнови базовые инструменты установки:
+
+```bash
+pip install --upgrade pip setuptools wheel
+```
+
+---
+
+## 6. Установка MCP-сервера
+
+```bash
+cd ~/apps/purchase-tracker/purchase_tracker_mcp_project
 pip install -e .
 ```
 
-Проверь, что команда MCP-сервера доступна:
+Проверь, что команда появилась:
+
+```bash
+which purchase-tracker-mcp
+```
+
+Ожидаемо путь должен быть примерно такой:
+
+```text
+/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
+```
+
+Можно проверить ручной запуск:
 
 ```bash
 purchase-tracker-mcp
 ```
 
-Останови её через `Ctrl+C`: при обычном запуске она ждёт MCP-клиента по stdio.
+Если терминал “завис”, это нормально: MCP-сервер ждёт JSON-RPC сообщения от MCP-клиента через stdio.
 
-Теперь поставь Telegram-агента. Можно использовать тот же virtualenv, чтобы агент видел команду `purchase-tracker-mcp`:
+Останови его:
 
 ```bash
-cd ../purchase_tracker_telegram_agent
-pip install -e .
-cp .env.example .env
+Ctrl+C
 ```
 
-## Настройка `.env`
+---
 
-Открой `.env` и заполни значения.
+## 7. Установка Telegram-агента
 
-Минимальный набор для Yandex AI Studio / Alice AI LLM:
+```bash
+cd ~/apps/purchase-tracker/purchase_tracker_telegram_agent
+pip install -e .
+```
+
+Проверь, что команды агента появились:
+
+```bash
+which purchase-agent-bot
+which purchase-agent-smoke
+```
+
+Ожидаемые пути:
+
+```text
+/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-agent-bot
+/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-agent-smoke
+```
+
+---
+
+## 8. Настройка `.env`
+
+Создай файл `.env`:
+
+```bash
+cd ~/apps/purchase-tracker/purchase_tracker_telegram_agent
+cp .env.example .env
+nano .env
+```
+
+Минимальный рабочий пример `.env`:
 
 ```env
 TELEGRAM_BOT_TOKEN=
@@ -68,177 +166,513 @@ TELEGRAM_ALLOWED_USER_IDS=
 
 LLM_BASE_URL=https://llm.api.cloud.yandex.net/v1
 LLM_API_KEY=
+LLM_PROJECT=
 YANDEX_FOLDER_ID=
 LLM_MODEL=
 LLM_AUTH_HEADER_MODE=api-key
-LLM_TOOL_MODE=auto
+LLM_TOOL_MODE=json
+LLM_TEMPERATURE=0.1
+LLM_MAX_TOKENS=1200
+LLM_MAX_TOOL_ITERATIONS=6
 
-MCP_SERVER_COMMAND=purchase-tracker-mcp
+MCP_SERVER_COMMAND=/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
 MCP_SERVER_ARGS=
-PURCHASE_DB_PATH=
 
-AGENT_TIMEZONE=Europe/Vilnius
+PURCHASE_DB_PATH=/home/ubuntu/.purchase_tracker_mcp/purchases.sqlite3
+
+AGENT_TIMEZONE=Europe/Moscow
 AGENT_DEFAULT_CURRENCY=RUB
+AGENT_HISTORY_TURNS=10
+LOG_LEVEL=INFO
 ```
 
-Если `LLM_MODEL` оставить пустым, бот сам соберёт модель из `YANDEX_FOLDER_ID` и имени модели `aliceai-llm`.
+### Что обязательно заполнить
 
-Для другого OpenAI-совместимого шлюза поменяй `LLM_BASE_URL`, `LLM_MODEL` и `LLM_AUTH_HEADER_MODE` в `.env`. Например, для шлюза с Bearer-авторизацией ставь `LLM_AUTH_HEADER_MODE=bearer`.
-
-## Telegram-токен
-
-1. Открой Telegram.
-2. Напиши `@BotFather`.
-3. Выполни `/newbot`.
-4. Скопируй токен в `TELEGRAM_BOT_TOKEN`.
-5. Запусти бота и напиши ему `/whoami`.
-6. Скопируй свой id в `TELEGRAM_ALLOWED_USER_IDS`, чтобы бот не был доступен посторонним.
-
-Формат для нескольких пользователей:
+Обязательно заполни:
 
 ```env
-TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
+TELEGRAM_BOT_TOKEN=
+LLM_API_KEY=
+YANDEX_FOLDER_ID=
 ```
 
-Если в белый список добавлено несколько Telegram id, все эти люди смогут пользоваться одним ботом. При этом бот будет автоматически передавать их Telegram `user_id` в MCP-сервер, чтобы каждый пользователь видел только свои покупки и свои агрегаты, даже если физически данные лежат в одной SQLite-БД.
+После первого запуска бота напиши ему `/whoami`, получи свой Telegram id и заполни:
 
-## Проверка MCP
+```env
+TELEGRAM_ALLOWED_USER_IDS=123456789
+```
+
+Если оставить `TELEGRAM_ALLOWED_USER_IDS` пустым, бот будет отвечать любому пользователю, который найдёт бота в Telegram.
+
+### Если серверный пользователь не `ubuntu`
+
+Узнай домашнюю директорию:
+
+```bash
+echo $HOME
+```
+
+Если путь не `/home/ubuntu`, замени в `.env`:
+
+```env
+MCP_SERVER_COMMAND=/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
+PURCHASE_DB_PATH=/home/ubuntu/.purchase_tracker_mcp/purchases.sqlite3
+```
+
+на реальные пути из твоего сервера.
+
+Например, если пользователь `yc-user`, пути будут такими:
+
+```env
+MCP_SERVER_COMMAND=/home/yc-user/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
+PURCHASE_DB_PATH=/home/yc-user/.purchase_tracker_mcp/purchases.sqlite3
+```
+
+---
+
+## 9. Создание директории для SQLite-БД
+
+```bash
+mkdir -p ~/.purchase_tracker_mcp
+```
+
+Права на `.env` лучше ограничить:
+
+```bash
+chmod 600 ~/apps/purchase-tracker/purchase_tracker_telegram_agent/.env
+```
+
+---
+
+## 10. Проверка MCP-связности
+
+Активируй virtualenv:
+
+```bash
+cd ~/apps/purchase-tracker
+source .venv/bin/activate
+```
+
+Запусти smoke-check:
+
+```bash
+cd ~/apps/purchase-tracker/purchase_tracker_telegram_agent
+purchase-agent-smoke
+```
+
+Ожидаемый результат:
+
+- список MCP tools;
+- успешный ответ `health`;
+- путь к SQLite-БД.
+
+Примерно так:
+
+```text
+MCP tools:
+[
+  "health",
+  "add_purchase",
+  "get_purchase",
+  "list_purchases",
+  "update_purchase",
+  "delete_purchase",
+  "list_categories",
+  "upsert_category",
+  "rename_category",
+  "delete_category",
+  "get_summary",
+  "monthly_budget_report",
+  "export_purchases_csv",
+  "import_purchases_csv",
+  "backup_database",
+  "purge_all_data"
+]
+
+health:
+{
+  "ok": true,
+  "server": "purchase-tracker",
+  "db_path": "/home/ubuntu/.purchase_tracker_mcp/purchases.sqlite3",
+  "purchase_count": 0,
+  "category_count": 17
+}
+```
+
+---
+
+## 11. Ручной запуск бота
+
+```bash
+cd ~/apps/purchase-tracker
+source .venv/bin/activate
+cd purchase_tracker_telegram_agent
+purchase-agent-bot
+```
+
+После запуска открой Telegram и напиши боту:
+
+```text
+/start
+```
+
+Потом:
+
+```text
+/whoami
+```
+
+Скопируй Telegram id в `.env`:
+
+```env
+TELEGRAM_ALLOWED_USER_IDS=123456789
+```
+
+Перезапусти бота.
+
+---
+
+## 12. Установка как systemd user service
+
+Создай директорию для пользовательских systemd-сервисов:
+
+```bash
+mkdir -p ~/.config/systemd/user
+```
+
+Создай service-файл:
+
+```bash
+nano ~/.config/systemd/user/purchase-agent-bot.service
+```
+
+Вставь:
+
+```ini
+[Unit]
+Description=Purchase Tracker Telegram Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/apps/purchase-tracker/purchase_tracker_telegram_agent
+EnvironmentFile=/home/ubuntu/apps/purchase-tracker/purchase_tracker_telegram_agent/.env
+ExecStart=/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-agent-bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+Если пользователь на сервере не `ubuntu`, замени `/home/ubuntu` на реальный путь.
+
+Проверь путь:
+
+```bash
+echo $HOME
+```
+
+Например, для пользователя `yc-user` service-файл должен быть:
+
+```ini
+[Unit]
+Description=Purchase Tracker Telegram Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/yc-user/apps/purchase-tracker/purchase_tracker_telegram_agent
+EnvironmentFile=/home/yc-user/apps/purchase-tracker/purchase_tracker_telegram_agent/.env
+ExecStart=/home/yc-user/apps/purchase-tracker/.venv/bin/purchase-agent-bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+---
+
+## 13. Запуск systemd-сервиса
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable purchase-agent-bot
+systemctl --user start purchase-agent-bot
+```
+
+Проверить статус:
+
+```bash
+systemctl --user status purchase-agent-bot
+```
+
+Посмотреть логи:
+
+```bash
+journalctl --user -u purchase-agent-bot -f
+```
+
+---
+
+## 14. Чтобы сервис работал после выхода из SSH
+
+Включи linger для пользователя:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Проверь:
+
+```bash
+loginctl show-user "$USER" | grep Linger
+```
+
+Ожидаемо:
+
+```text
+Linger=yes
+```
+
+---
+
+## 15. Обновление исходников из GitHub
+
+Останови сервис:
+
+```bash
+systemctl --user stop purchase-agent-bot
+```
+
+Обнови MCP-сервер:
+
+```bash
+cd ~/apps/purchase-tracker/purchase_tracker_mcp_project
+git pull
+```
+
+Обнови агента:
+
+```bash
+cd ~/apps/purchase-tracker/purchase_tracker_telegram_agent
+git pull
+```
+
+Переустанови оба проекта в editable-режиме:
+
+```bash
+cd ~/apps/purchase-tracker
+source .venv/bin/activate
+
+cd purchase_tracker_mcp_project
+pip install -e .
+
+cd ../purchase_tracker_telegram_agent
+pip install -e .
+```
+
+Проверь связность:
 
 ```bash
 purchase-agent-smoke
 ```
 
-Ожидаемый результат: список tools и `health` с путём к SQLite-БД.
-
-Важно: smoke-check проверяет доступность MCP и базовую связность, но не эмулирует Telegram `user_id`. Для проверки multi-user сценария лучше после запуска бота написать ему с двух разных разрешённых аккаунтов и убедиться, что `/recent` и `/today` показывают разные данные.
-
-## Запуск
+Запусти сервис:
 
 ```bash
-purchase-agent-bot
+systemctl --user start purchase-agent-bot
 ```
 
-Или так:
+Проверь логи:
 
 ```bash
-python3 -m purchase_agent.main
+journalctl --user -u purchase-agent-bot -f
 ```
 
-## Команды в Telegram
+---
+
+## 16. Резервная копия SQLite-БД
+
+По умолчанию БД лежит здесь:
 
 ```text
-/start — краткое описание.
-/help — помощь.
-/whoami — показать Telegram user id.
-/health — проверить MCP и БД.
-/recent 10 — последние покупки.
-/today — расходы за сегодня по категориям.
-/month — отчёт по лимитам за текущий месяц.
-/categories — список категорий.
-/backup — сделать резервную копию SQLite-БД.
-/reset_context — сбросить контекст диалога, не трогая БД.
+/home/ubuntu/.purchase_tracker_mcp/purchases.sqlite3
 ```
 
-## Примеры сообщений
+Ручной бэкап:
+
+```bash
+mkdir -p ~/backups/purchase-tracker
+cp ~/.purchase_tracker_mcp/purchases.sqlite3 ~/backups/purchase-tracker/purchases_$(date +%Y-%m-%d_%H-%M-%S).sqlite3
+```
+
+Также можно вызвать команду в Telegram:
+
+```text
+/backup
+```
+
+---
+
+## 17. Основные команды бота
+
+```text
+/start — стартовое сообщение
+/help — помощь
+/whoami — показать Telegram user id
+/health — проверить MCP и БД
+/recent 10 — последние 10 покупок
+/today — расходы за сегодня
+/month — отчёт за текущий месяц
+/categories — категории
+/backup — резервная копия БД
+/reset_context — сбросить контекст диалога
+```
+
+---
+
+## 18. Примеры сообщений
 
 ```text
 кофе 250
 пятёрочка 1300 продукты
 вчера такси 740
-запиши: озон 2490, одежда
-мак 860 кафе, карта тинькофф
+озон 2490 одежда
+мак 860 кафе
 удали последнюю
-исправь последнюю категорию на Кафе и рестораны
+исправь последнюю на 270
 сколько я потратила сегодня
 покажи расходы по категориям за месяц
 ```
 
-## Режимы tool calling
+---
 
-Настройка `LLM_TOOL_MODE`:
+## 19. Важные замечания
 
-```text
-auto   — сначала native tools, если ошибка — fallback в JSON protocol.
-native — только OpenAI-style function/tool calling.
-json   — tools описываются в промпте, модель возвращает JSON-команду.
-```
+### MCP не запускается отдельно
 
-Для максимальной совместимости оставь:
+Не нужно делать отдельный systemd-сервис для `purchase-tracker-mcp`.
+
+Агент сам запускает MCP-сервер через:
 
 ```env
-LLM_TOOL_MODE=auto
-```
-
-Если провайдер Alice AI не принимает параметр `tools`, поставь:
-
-```env
-LLM_TOOL_MODE=json
-```
-
-## Как бот вызывает MCP
-
-Бот поднимает MCP-сервер сам через stdio-команду:
-
-```env
-MCP_SERVER_COMMAND=purchase-tracker-mcp
+MCP_SERVER_COMMAND=/home/ubuntu/apps/purchase-tracker/.venv/bin/purchase-tracker-mcp
 MCP_SERVER_ARGS=
 ```
 
-Если MCP-сервер нужно запускать через Python-модуль:
+### Один virtualenv для двух проектов
 
-```env
-MCP_SERVER_COMMAND=python3
-MCP_SERVER_ARGS=-m purchase_tracker_mcp.server
-```
-
-Если хочешь явно задать общий файл БД:
-
-```env
-PURCHASE_DB_PATH=/Users/username/.purchase_tracker_mcp/purchases.sqlite3
-```
-
-Как работает multi-user flow:
+Правильная схема:
 
 ```text
-Telegram message → from_user.id → purchase_tracker_telegram_agent → MCP tool arguments + user_id → purchase-tracker-mcp → одна SQLite-БД
+~/apps/purchase-tracker/
+├── .venv/
+├── purchase_tracker_mcp_project/
+└── purchase_tracker_telegram_agent/
 ```
 
-Предполагается, что MCP-сервер умеет принимать поле `user_id` и использовать его как фильтр почти для всех пользовательских операций: запись покупки, списки, сводки, отчёты по категориям и т.д. Сам агент не хранит отдельные файлы БД по пользователям — разделение делается на стороне MCP/БД.
-
-Если какой-то технический MCP tool не должен принимать `user_id`, это нужно учитывать в схеме и реализации MCP-сервера.
-
-## Установка как systemd service
-
-Скопируй пример:
+В `.venv` должны быть установлены оба проекта:
 
 ```bash
-mkdir -p /Users/username/.config/systemd/user
-cp systemd/purchase-agent-bot.service /Users/username/.config/systemd/user/purchase-agent-bot.service
-systemctl --user daemon-reload
-systemctl --user enable purchase-agent-bot
-systemctl --user start purchase-agent-bot
+pip install -e ~/apps/purchase-tracker/purchase_tracker_mcp_project
+pip install -e ~/apps/purchase-tracker/purchase_tracker_telegram_agent
+```
+
+### Безопасность
+
+- Не коммить `.env`.
+- Не публиковать Telegram token.
+- Не публиковать LLM API key.
+- Обязательно заполни `TELEGRAM_ALLOWED_USER_IDS`.
+- Не открывай MCP-сервер наружу в интернет.
+- SQLite-БД храни в домашней директории пользователя сервера.
+
+---
+
+## 20. Диагностика проблем
+
+### `purchase-tracker-mcp: command not found`
+
+Активируй virtualenv:
+
+```bash
+cd ~/apps/purchase-tracker
+source .venv/bin/activate
+```
+
+Проверь установку MCP:
+
+```bash
+pip install -e ./purchase_tracker_mcp_project
+which purchase-tracker-mcp
+```
+
+### `purchase-agent-bot: command not found`
+
+```bash
+cd ~/apps/purchase-tracker
+source .venv/bin/activate
+pip install -e ./purchase_tracker_telegram_agent
+which purchase-agent-bot
+```
+
+### Бот не отвечает
+
+Проверь статус:
+
+```bash
 systemctl --user status purchase-agent-bot
 ```
 
-В файле `systemd/purchase-agent-bot.service` путь рассчитан на папку:
+Проверь логи:
 
-```text
-/Users/username/purchase_tracker_telegram_agent
+```bash
+journalctl --user -u purchase-agent-bot -n 100
 ```
 
-Если проект лежит в другом месте, поменяй `WorkingDirectory`, `EnvironmentFile`, `ExecStart`.
+Проверь `.env`:
 
-## Безопасность
+```bash
+cd ~/apps/purchase-tracker/purchase_tracker_telegram_agent
+cat .env
+```
 
-- Не коммить `.env`.
-- Обязательно заполни `TELEGRAM_ALLOWED_USER_IDS` после первого `/whoami`.
-- Не отправляй токен Telegram и API-ключ LLM в чат.
-- Если разрешаешь нескольким людям пользоваться ботом, проверь, что MCP-сервер действительно фильтрует данные по `user_id`, а не просто принимает это поле формально.
-- `purge_all_data` защищён в MCP-сервере точной фразой подтверждения, но лучше не просить агента полностью очищать БД без необходимости.
+Особенно проверь:
 
-## Что менять под себя
+```env
+TELEGRAM_BOT_TOKEN=
+LLM_API_KEY=
+YANDEX_FOLDER_ID=
+MCP_SERVER_COMMAND=
+PURCHASE_DB_PATH=
+```
 
-- Системный промпт: `purchase_agent/prompts.py`.
-- Список команд Telegram: `purchase_agent/bot.py`.
-- Логика tool loop: `purchase_agent/llm_client.py`.
-- MCP transport и сериализация результатов: `purchase_agent/mcp_client.py`.
+### Ошибка доступа к боту
+
+Напиши боту:
+
+```text
+/whoami
+```
+
+Скопируй id в `.env`:
+
+```env
+TELEGRAM_ALLOWED_USER_IDS=123456789
+```
+
+Перезапусти сервис:
+
+```bash
+systemctl --user restart purchase-agent-bot
+```
+
+### Смотреть логи в реальном времени
+
+```bash
+journalctl --user -u purchase-agent-bot -f
+```
