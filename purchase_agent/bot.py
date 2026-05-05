@@ -197,8 +197,7 @@ class PurchaseTelegramBot:
             return
         result = await self.mcp_client.call_tool(
             "purge_all_data",
-            {},
-            user_id=get_message_user_id(message),
+            {"confirm": "DELETE ALL PURCHASE DATA"},
         )
         payload = result.get("payload") or result
         await answer_long(message, format_purge_result(payload))
