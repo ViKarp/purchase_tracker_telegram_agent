@@ -54,7 +54,7 @@ class PurchaseAgent:
             _truncate_for_log(text),
         )
         self.history.add_user(chat_id, text)
-        messages = await self._base_messages(chat_id, text)
+        messages = await self._base_messages(chat_id, text, user_id=user_id)
 
         try:
             if self._settings.llm_tool_mode == "json":
@@ -99,8 +99,8 @@ class PurchaseAgent:
                 _to_json_for_log(verified_result),
             )
         self._log_write_tool_success(tool_name, verified_result, user_id=user_id)
-        forced_reply = _build_forced_tool_reply(tool_name, verified_result)
-        return verified_result, forced_reply
+        status_prefix = _build_write_tool_status_prefix(tool_name, verified_result)
+        return verified_result, status_prefix
 
     async def _verify_tool_result(
         self,
@@ -109,30 +109,220 @@ class PurchaseAgent:
         *,
         user_id: int | str | None = None,
     ) -> dict[str, Any]:
-        if tool_name != "add_purchase":
-            return result
         payload = result.get("payload")
+        if tool_name == "add_purchase":
+            return await self._verify_add_purchase_result(result, payload, user_id=user_id)
+        if tool_name == "update_purchase":
+            return await self._verify_update_purchase_result(result, payload, user_id=user_id)
+        if tool_name == "delete_purchase":
+            return await self._verify_delete_purchase_result(result, payload, user_id=user_id)
+        if tool_name == "upsert_category":
+            return await self._verify_upsert_category_result(result, payload, user_id=user_id)
+        if tool_name == "rename_category":
+            return await self._verify_rename_category_result(result, payload, user_id=user_id)
+        if tool_name == "delete_category":
+            return await self._verify_delete_category_result(result, payload, user_id=user_id)
+        if tool_name == "import_purchases_csv":
+            return await self._verify_import_result(result, payload, user_id=user_id)
+        return result
+
+    async def _verify_add_purchase_result(
+        self,
+        result: dict[str, Any],
+        payload: Any,
+        *,
+        user_id: int | str | None = None,
+    ) -> dict[str, Any]:
         purchase_id = _extract_purchase_id(payload)
         if purchase_id is None:
             return result
         verification_result = await safe_call_tool(
             self._mcp,
             "get_purchase",
-            {"id": purchase_id},
+            {"purchase_id": purchase_id},
             user_id=user_id,
         )
         verification_payload = verification_result.get("payload")
-        if not _is_verified_purchase_result(verification_result, verification_payload, purchase_id):
-            return {
-                "ok": False,
-                "error": "Запись не прошла post-write verification через get_purchase.",
-                "tool_name": tool_name,
-                "payload": payload,
-                "verification": verification_result,
-            }
-        merged = dict(result)
-        merged["verification"] = verification_result
-        return merged
+        if not _is_verified_purchase_result(verification_result, verification_payload, purchase_id, user_id=user_id):
+            return _build_verification_failure(
+                tool_name="add_purchase",
+                error="Запись не прошла post-write verification через get_purchase.",
+                payload=payload,
+                verification=verification_result,
+            )
+        return _merge_verification(result, verification_result)
+
+    async def _verify_update_purchase_result(
+        self,
+        result: dict[str, Any],
+        payload: Any,
+        *,
+        user_id: int | str | None = None,
+    ) -> dict[str, Any]:
+        purchase_id = _extract_purchase_id(payload)
+        if purchase_id is None:
+            return result
+        verification_result = await safe_call_tool(
+            self._mcp,
+            "get_purchase",
+            {"purchase_id": purchase_id},
+            user_id=user_id,
+        )
+        verification_payload = verification_result.get("payload")
+        if not _is_verified_purchase_result(verification_result, verification_payload, purchase_id, user_id=user_id):
+            return _build_verification_failure(
+                tool_name="update_purchase",
+                error="Изменение не прошло verification через get_purchase.",
+                payload=payload,
+                verification=verification_result,
+            )
+        return _merge_verification(result, verification_result)
+
+    async def _verify_delete_purchase_result(
+        self,
+        result: dict[str, Any],
+        payload: Any,
+        *,
+        user_id: int | str | None = None,
+    ) -> dict[str, Any]:
+        purchase_id = _extract_purchase_id(payload)
+        if purchase_id is None:
+            return result
+        verification_result = await safe_call_tool(
+            self._mcp,
+            "get_purchase",
+            {"purchase_id": purchase_id},
+            user_id=user_id,
+        )
+        verification_payload = verification_result.get("payload")
+        if not _is_verified_deleted_purchase_result(verification_result, verification_payload):
+            return _build_verification_failure(
+                tool_name="delete_purchase",
+                error="Удаление не прошло verification через get_purchase.",
+                payload=payload,
+                verification=verification_result,
+            )
+        return _merge_verification(result, verification_result)
+
+    async def _verify_upsert_category_result(
+        self,
+        result: dict[str, Any],
+        payload: Any,
+        *,
+        user_id: int | str | None = None,
+    ) -> dict[str, Any]:
+        category_name = _extract_category_name(payload)
+        if not category_name:
+            return result
+        verification_result = await safe_call_tool(
+            self._mcp,
+            "get_category",
+            {"name": category_name},
+            user_id=user_id,
+        )
+        verification_payload = verification_result.get("payload")
+        if not _is_verified_category_present(verification_result, verification_payload, category_name, user_id=user_id):
+            return _build_verification_failure(
+                tool_name="upsert_category",
+                error="Категория не прошла verification через get_category.",
+                payload=payload,
+                verification=verification_result,
+            )
+        return _merge_verification(result, verification_result)
+
+    async def _verify_rename_category_result(
+        self,
+        result: dict[str, Any],
+        payload: Any,
+        *,
+        user_id: int | str | None = None,
+    ) -> dict[str, Any]:
+        old_name, new_name = _extract_rename_category_names(payload)
+        if not old_name or not new_name:
+            return result
+        new_result = await safe_call_tool(self._mcp, "get_category", {"name": new_name}, user_id=user_id)
+        old_result = await safe_call_tool(self._mcp, "get_category", {"name": old_name}, user_id=user_id)
+        new_payload = new_result.get("payload")
+        old_payload = old_result.get("payload")
+        if not _is_verified_category_present(new_result, new_payload, new_name, user_id=user_id):
+            return _build_verification_failure(
+                tool_name="rename_category",
+                error="Новая категория не найдена после rename.",
+                payload=payload,
+                verification={"new": new_result, "old": old_result},
+            )
+        if not _is_verified_category_absent(old_result, old_payload):
+            return _build_verification_failure(
+                tool_name="rename_category",
+                error="Старая категория всё ещё существует после rename.",
+                payload=payload,
+                verification={"new": new_result, "old": old_result},
+            )
+        return _merge_verification(result, {"new": new_result, "old": old_result})
+
+    async def _verify_delete_category_result(
+        self,
+        result: dict[str, Any],
+        payload: Any,
+        *,
+        user_id: int | str | None = None,
+    ) -> dict[str, Any]:
+        deleted_name, target_name = _extract_delete_category_names(payload)
+        if not deleted_name or not target_name:
+            return result
+        deleted_result = await safe_call_tool(self._mcp, "get_category", {"name": deleted_name}, user_id=user_id)
+        target_result = await safe_call_tool(self._mcp, "get_category", {"name": target_name}, user_id=user_id)
+        deleted_payload = deleted_result.get("payload")
+        target_payload = target_result.get("payload")
+        if not _is_verified_category_absent(deleted_result, deleted_payload):
+            return _build_verification_failure(
+                tool_name="delete_category",
+                error="Удалённая категория всё ещё существует после delete.",
+                payload=payload,
+                verification={"deleted": deleted_result, "target": target_result},
+            )
+        if not _is_verified_category_present(target_result, target_payload, target_name, user_id=user_id):
+            return _build_verification_failure(
+                tool_name="delete_category",
+                error="Целевая категория для переноса не найдена после delete.",
+                payload=payload,
+                verification={"deleted": deleted_result, "target": target_result},
+            )
+        return _merge_verification(result, {"deleted": deleted_result, "target": target_result})
+
+    async def _verify_import_result(
+        self,
+        result: dict[str, Any],
+        payload: Any,
+        *,
+        user_id: int | str | None = None,
+    ) -> dict[str, Any]:
+        imported_ids = _extract_imported_purchase_ids(payload)
+        if not imported_ids:
+            return result
+        verification_results = []
+        for purchase_id in imported_ids:
+            verification_result = await safe_call_tool(
+                self._mcp,
+                "get_purchase",
+                {"purchase_id": purchase_id},
+                user_id=user_id,
+            )
+            verification_payload = verification_result.get("payload")
+            verification_results.append(verification_result)
+            if not _is_verified_purchase_result(
+                verification_result,
+                verification_payload,
+                purchase_id,
+                user_id=user_id,
+            ):
+                return _build_verification_failure(
+                    tool_name="import_purchases_csv",
+                    error=f"Импорт не прошёл verification для purchase_id={purchase_id}.",
+                    payload=payload,
+                    verification=verification_results,
+                )
+        return _merge_verification(result, verification_results)
 
     def _log_write_tool_success(
         self,
@@ -157,17 +347,28 @@ class PurchaseAgent:
     def reset_history(self, chat_id: int) -> None:
         self.history.reset(chat_id)
 
-    async def _base_messages(self, chat_id: int, user_text: str) -> list[dict[str, Any]]:
+    async def _base_messages(
+        self,
+        chat_id: int,
+        user_text: str,
+        *,
+        user_id: int | str | None = None,
+    ) -> list[dict[str, Any]]:
         system_prompt = build_system_prompt(
             timezone=self._settings.agent_timezone,
             default_currency=self._settings.agent_default_currency,
         )
-        category_hint = await self._build_category_hint(user_text)
+        category_hint = await self._build_category_hint(user_text, user_id=user_id)
         if category_hint:
             system_prompt = f"{system_prompt}\n\n{category_hint}"
         return [{"role": "system", "content": system_prompt}, *self.history.get(chat_id)]
 
-    async def _build_category_hint(self, user_text: str) -> str:
+    async def _build_category_hint(
+        self,
+        user_text: str,
+        *,
+        user_id: int | str | None = None,
+    ) -> str:
         normalized_text = user_text.strip().lower()
         if not normalized_text:
             return ""
@@ -178,6 +379,7 @@ class PurchaseAgent:
             self._mcp,
             "list_categories",
             {"include_usage": True},
+            user_id=user_id,
         )
         payload = result.get("payload") or {}
         if not isinstance(payload, dict) or not payload.get("ok"):
@@ -279,7 +481,16 @@ class PurchaseAgent:
                     }
                 )
                 if forced_reply is not None:
-                    return forced_reply
+                    working_messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "Сначала покажи короткий статус операции одной строкой, затем пустую строку, "
+                                "потом дай нормальный красивый ответ пользователю по-русски. "
+                                f"Строго используй эту первую строку без изменений: {forced_reply}"
+                            ),
+                        }
+                    )
 
         return "Я выполнила несколько действий, но не смогла компактно сформировать финальный ответ."
 
@@ -366,7 +577,13 @@ class PurchaseAgent:
                     {"tool_name": tool_name, "arguments": arguments, "result": result.get("payload", result)}
                 )
                 if forced_reply is not None:
-                    return forced_reply
+                    tool_results.append(
+                        {
+                            "tool_name": "system_status",
+                            "arguments": {},
+                            "result": {"status_prefix": forced_reply},
+                        }
+                    )
 
             working_messages.append({"role": "assistant", "content": json.dumps(command, ensure_ascii=False)})
             working_messages.append(
@@ -520,35 +737,35 @@ WRITE_TOOL_NAMES = frozenset(
 
 
 SUCCESS_MESSAGE_BY_TOOL = {
-    "add_purchase": "Запись в БД подтверждена.",
-    "update_purchase": "Изменения в БД подтверждены.",
-    "delete_purchase": "Удаление из БД подтверждено.",
-    "upsert_category": "Изменение категории в БД подтверждено.",
-    "rename_category": "Переименование категории в БД подтверждено.",
-    "delete_category": "Удаление категории в БД подтверждено.",
-    "import_purchases_csv": "Импорт в БД подтверждён.",
+    "add_purchase": "✅ Запись подтверждена",
+    "update_purchase": "✅ Изменения подтверждены",
+    "delete_purchase": "✅ Удаление подтверждено",
+    "upsert_category": "✅ Категория сохранена",
+    "rename_category": "✅ Категория переименована",
+    "delete_category": "✅ Категория удалена",
+    "import_purchases_csv": "✅ Импорт подтверждён",
 }
 
 
 FAILURE_MESSAGE_BY_TOOL = {
-    "add_purchase": "Не удалось записать покупку в БД.",
-    "update_purchase": "Не удалось изменить покупку в БД.",
-    "delete_purchase": "Не удалось удалить покупку из БД.",
-    "upsert_category": "Не удалось сохранить категорию в БД.",
-    "rename_category": "Не удалось переименовать категорию в БД.",
-    "delete_category": "Не удалось удалить категорию из БД.",
-    "import_purchases_csv": "Не удалось импортировать покупки в БД.",
+    "add_purchase": "❌ Не удалось записать покупку",
+    "update_purchase": "❌ Не удалось изменить покупку",
+    "delete_purchase": "❌ Не удалось удалить покупку",
+    "upsert_category": "❌ Не удалось сохранить категорию",
+    "rename_category": "❌ Не удалось переименовать категорию",
+    "delete_category": "❌ Не удалось удалить категорию",
+    "import_purchases_csv": "❌ Не удалось импортировать покупки",
 }
 
 
 SUCCESS_KEYS_BY_TOOL = {
     "add_purchase": ("id", "purchase_id", "amount", "spent_at"),
-    "update_purchase": ("id", "purchase_id", "updated"),
-    "delete_purchase": ("id", "purchase_id", "deleted"),
-    "upsert_category": ("id", "name", "category", "created", "updated"),
-    "rename_category": ("id", "name", "category", "updated"),
-    "delete_category": ("id", "name", "category", "deleted"),
-    "import_purchases_csv": ("imported_count",),
+    "update_purchase": ("id", "purchase_id", "changed"),
+    "delete_purchase": ("id", "purchase_id", "changed"),
+    "upsert_category": ("category",),
+    "rename_category": ("changed", "new_name"),
+    "delete_category": ("deleted_category", "move_purchases_to"),
+    "import_purchases_csv": ("imported_count", "imported_purchase_ids"),
 }
 
 
@@ -568,7 +785,7 @@ def _looks_like_category_sensitive_request(text: str) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
-def _build_forced_tool_reply(tool_name: str, result: dict[str, Any]) -> str | None:
+def _build_write_tool_status_prefix(tool_name: str, result: dict[str, Any]) -> str | None:
     if tool_name not in WRITE_TOOL_NAMES:
         return None
     payload = result.get("payload")
@@ -589,48 +806,45 @@ def _is_successful_write_result(tool_name: str, result: dict[str, Any], payload:
 
 
 def _build_success_tool_reply(tool_name: str, payload: Any) -> str:
-    message = SUCCESS_MESSAGE_BY_TOOL.get(tool_name, "Операция в БД подтверждена.")
-    details = _format_tool_payload_details(payload)
-    return f"{message}\n{details}" if details else message
+    message = SUCCESS_MESSAGE_BY_TOOL.get(tool_name, "✅ Операция подтверждена")
+    details = _format_tool_status_details(payload)
+    return f"{message} · {details}" if details else message
 
 
 def _build_failure_tool_reply(tool_name: str, result: dict[str, Any], payload: Any) -> str:
-    message = FAILURE_MESSAGE_BY_TOOL.get(tool_name, "Операция с БД завершилась ошибкой.")
+    message = FAILURE_MESSAGE_BY_TOOL.get(tool_name, "❌ Операция завершилась ошибкой")
     reason = _extract_error_text(result, payload)
-    return f"{message}\nПричина: {reason}" if reason else message
+    return f"{message} · {reason}" if reason else message
 
 
-def _format_tool_payload_details(payload: Any) -> str:
+def _format_tool_status_details(payload: Any) -> str:
     if not isinstance(payload, dict):
         return ""
-    preferred_keys = (
-        "id",
-        "purchase_id",
-        "category",
-        "name",
-        "deleted",
-        "updated",
-        "created",
-        "imported_count",
-    )
     parts = []
-    for key in preferred_keys:
+    amount = payload.get("amount")
+    currency = payload.get("currency")
+    if amount not in (None, ""):
+        amount_text = str(amount)
+        if currency not in (None, ""):
+            amount_text = f"{amount_text} {currency}"
+        parts.append(amount_text)
+    for key in ("category", "name"):
         value = payload.get(key)
-        if value in (None, "", False):
-            continue
-        parts.append(f"{key}={value}")
-    return ", ".join(parts)
+        if value not in (None, ""):
+            parts.append(str(value))
+    for key in ("spent_at", "id", "purchase_id", "imported_count"):
+        value = payload.get(key)
+        if value not in (None, "", False):
+            label = "id" if key == "purchase_id" else key
+            parts.append(f"{label}={value}")
+    return " · ".join(parts)
 
 
 def _extract_error_text(result: dict[str, Any], payload: Any) -> str:
     verification = result.get("verification")
-    if isinstance(verification, dict):
-        verification_payload = verification.get("payload")
-        if isinstance(verification_payload, dict):
-            for key in ERROR_KEYS:
-                value = verification_payload.get(key)
-                if value not in (None, ""):
-                    return str(value)
+    verification_reason = _extract_error_text_from_verification(verification)
+    if verification_reason:
+        return verification_reason
     if isinstance(payload, dict):
         for key in ERROR_KEYS:
             value = payload.get(key)
@@ -648,16 +862,33 @@ def _extract_error_text(result: dict[str, Any], payload: Any) -> str:
 def _extract_purchase_id(payload: Any) -> int | None:
     if not isinstance(payload, dict):
         return None
+
     for key in ("id", "purchase_id"):
         value = payload.get(key)
         try:
             return int(value)
         except (TypeError, ValueError):
-            continue
+            pass
+
+    purchase = payload.get("purchase")
+    if isinstance(purchase, dict):
+        for key in ("id", "purchase_id"):
+            value = purchase.get(key)
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+
     return None
 
 
-def _is_verified_purchase_result(result: dict[str, Any], payload: Any, purchase_id: int) -> bool:
+def _is_verified_purchase_result(
+    result: dict[str, Any],
+    payload: Any,
+    purchase_id: int,
+    *,
+    user_id: int | str | None = None,
+) -> bool:
     if not result.get("ok"):
         return False
     if not isinstance(payload, dict):
@@ -665,7 +896,14 @@ def _is_verified_purchase_result(result: dict[str, Any], payload: Any, purchase_
     if payload.get("ok") is False:
         return False
     actual_id = _extract_purchase_id(payload)
-    return actual_id == purchase_id
+    if actual_id != purchase_id:
+        return False
+    purchase = _extract_purchase_payload(payload)
+    if not isinstance(purchase, dict):
+        return False
+    if user_id is not None and str(purchase.get("user_id")) != str(user_id):
+        return False
+    return True
 
 
 def _extract_entity_id(payload: Any) -> str | None:
@@ -692,6 +930,161 @@ def _build_log_details(payload: Any) -> dict[str, Any]:
         "deleted",
         "updated",
         "created",
+        "changed",
+        "deleted_category",
+        "move_purchases_to",
+        "old_name",
+        "new_name",
         "imported_count",
+        "imported_purchase_ids",
     )
     return {key: payload.get(key) for key in keys if payload.get(key) not in (None, "", False)}
+
+
+def _merge_verification(result: dict[str, Any], verification: Any) -> dict[str, Any]:
+    merged = dict(result)
+    merged["verification"] = verification
+    return merged
+
+
+def _build_verification_failure(
+    *,
+    tool_name: str,
+    error: str,
+    payload: Any,
+    verification: Any,
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": error,
+        "tool_name": tool_name,
+        "payload": payload,
+        "verification": verification,
+    }
+
+
+def _extract_purchase_payload(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    purchase = payload.get("purchase")
+    if isinstance(purchase, dict):
+        return purchase
+    if payload.get("id") is not None:
+        return payload
+    return None
+
+
+def _extract_category_name(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    category = payload.get("category")
+    if isinstance(category, dict):
+        name = category.get("name")
+        if name not in (None, ""):
+            return str(name)
+    for key in ("name", "category"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _extract_rename_category_names(payload: Any) -> tuple[str | None, str | None]:
+    if not isinstance(payload, dict):
+        return None, None
+    old_name = payload.get("old_name")
+    new_name = payload.get("new_name")
+    return _clean_optional_str(old_name), _clean_optional_str(new_name)
+
+
+def _extract_delete_category_names(payload: Any) -> tuple[str | None, str | None]:
+    if not isinstance(payload, dict):
+        return None, None
+    deleted_name = payload.get("deleted_category") or payload.get("name")
+    target_name = payload.get("move_purchases_to")
+    return _clean_optional_str(deleted_name), _clean_optional_str(target_name)
+
+
+def _extract_imported_purchase_ids(payload: Any) -> list[int]:
+    if not isinstance(payload, dict):
+        return []
+    raw_ids = payload.get("imported_purchase_ids")
+    if not isinstance(raw_ids, list):
+        return []
+    result = []
+    for value in raw_ids:
+        try:
+            result.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _is_verified_deleted_purchase_result(result: dict[str, Any], payload: Any) -> bool:
+    if result.get("ok"):
+        return False
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        return True
+    return True
+
+
+def _is_verified_category_present(
+    result: dict[str, Any],
+    payload: Any,
+    category_name: str,
+    *,
+    user_id: int | str | None = None,
+) -> bool:
+    if not result.get("ok"):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("ok") is False:
+        return False
+    category = payload.get("category") if isinstance(payload.get("category"), dict) else payload
+    if not isinstance(category, dict):
+        return False
+    if _clean_optional_str(category.get("name")) != category_name:
+        return False
+    if user_id is not None and str(category.get("user_id")) != str(user_id):
+        return False
+    return True
+
+
+def _is_verified_category_absent(result: dict[str, Any], payload: Any) -> bool:
+    if result.get("ok"):
+        return False
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        return True
+    return True
+
+
+def _extract_error_text_from_verification(verification: Any) -> str:
+    if isinstance(verification, dict):
+        payload = verification.get("payload")
+        if isinstance(payload, dict):
+            for key in ERROR_KEYS:
+                value = payload.get(key)
+                if value not in (None, ""):
+                    return str(value)
+        for key in ERROR_KEYS:
+            value = verification.get(key)
+            if value not in (None, ""):
+                return str(value)
+        for value in verification.values():
+            nested = _extract_error_text_from_verification(value)
+            if nested:
+                return nested
+    if isinstance(verification, list):
+        for item in verification:
+            nested = _extract_error_text_from_verification(item)
+            if nested:
+                return nested
+    return ""
+
+
+def _clean_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
