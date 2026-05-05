@@ -82,10 +82,11 @@ class PurchaseMCPClient:
         tools = await self.list_tools_for_llm(refresh=refresh)
         converted: list[dict[str, Any]] = []
         for tool in tools:
-            input_schema = getattr(tool, "inputSchema", None) or {
+            raw_input_schema = getattr(tool, "inputSchema", None) or {
                 "type": "object",
                 "properties": {},
             }
+            input_schema = _sanitize_schema_for_llm(raw_input_schema)
             converted.append(
                 {
                     "type": "function",
@@ -106,7 +107,7 @@ class PurchaseMCPClient:
                 {
                     "name": tool.name,
                     "description": tool.description or "",
-                    "input_schema": getattr(tool, "inputSchema", None) or {},
+                    "input_schema": _sanitize_schema_for_llm(getattr(tool, "inputSchema", None) or {}),
                 }
             )
         return result
@@ -207,6 +208,17 @@ def _extract_single_json_payload(content_items: list[dict[str, Any]]) -> Any | N
     if item.get("json") is not None:
         return item["json"]
     return None
+
+
+def _sanitize_schema_for_llm(schema: dict[str, Any]) -> dict[str, Any]:
+    copied = json.loads(json.dumps(schema, ensure_ascii=False, default=str))
+    properties = copied.get("properties")
+    if isinstance(properties, dict):
+        properties.pop("user_id", None)
+    required = copied.get("required")
+    if isinstance(required, list):
+        copied["required"] = [item for item in required if item != "user_id"]
+    return copied
 
 
 def _truncate_for_log(value: Any, limit: int = 1200) -> str:
